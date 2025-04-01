@@ -90,8 +90,9 @@ The simulator.py file is an *initial and basic version* of the project. While it
    - The *first waiting process (if any) automatically gets the resource*.
 4. *Checking Deadlocks*:
    - Click *Check Deadlock* to detect *circular dependencies*.
-5. *Visualizing the Graph*:
-   - Click *Show Graph* to see the latest state of the system.
+5. *Removing Elements*:
+   - Click Remove Process to delete a process and its associated requests.
+   - Click Remove Resource to delete a resource and release its allocations.
 
 ## 🛠 Future Enhancements
 - *Priority-based resource allocation* → Allocate resources based on priority levels.
