@@ -8,7 +8,6 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, QGridLayout
                              QWidget, QMessageBox, QInputDialog, QLabel)
 from graph_manager import GraphManager
 
-# Updated button style
 BUTTON_STYLE = """
     QPushButton {
         background-color: #a677d9;
@@ -55,7 +54,7 @@ class ResourceAllocationSimulator(QMainWindow):
             btn = QPushButton(text)
             btn.clicked.connect(handler)
             btn.setStyleSheet(BUTTON_STYLE)
-            btn.setMinimumHeight(80)  # Make buttons larger
+            btn.setMinimumHeight(80)
             layout.addWidget(btn, row, col)
             col += 1
             if col > 2:
@@ -63,19 +62,15 @@ class ResourceAllocationSimulator(QMainWindow):
                 row += 1
 
         layout.addWidget(title, 0, 0, 1, 3)
-
-        # Shift buttons slightly upward by reducing bottom row stretch
         for i in range(row):
-            layout.setRowStretch(i, 2)  # Increase stretch factor for upper rows
-        layout.setRowStretch(row, 0)   # Reduce stretch for last row to pull buttons up
-
+            layout.setRowStretch(i, 2)
+        layout.setRowStretch(row, 0)
         for i in range(3):
             layout.setColumnStretch(i, 1)
 
-        central_widget.setStyleSheet("background-color: #2E2E2E;")  # Dark background for better contrast
+        central_widget.setStyleSheet("background-color: #2E2E2E;")
         central_widget.setLayout(layout)
         self.setCentralWidget(central_widget)
-
 
     def add_process(self):
         process_id = self.graph_manager.add_process()
@@ -103,12 +98,10 @@ class ResourceAllocationSimulator(QMainWindow):
 
         status = self.graph_manager.allocate_resource(process, resource)
         if status == "not enough instances":
-            self.graph_manager.graph.add_edge(process, resource, style="dashed")  # Add waiting edge
             QMessageBox.information(self, "Request", f"{process} waiting for {resource}")
         else:
             QMessageBox.information(self, "Allocation", f"{resource} {status} to {process}")
-
-        self.show_graph()  # Refresh graph after allocation
+        self.show_graph()
 
     def release_resource(self):
         allocations = [(u, v) for u, v in self.graph_manager.graph.edges if u.startswith("R") and v.startswith("P")]
@@ -118,15 +111,22 @@ class ResourceAllocationSimulator(QMainWindow):
 
         allocation_strs = [f"{u} → {v}" for u, v in allocations]
         selection, ok = QInputDialog.getItem(self, "Release Resource", "Select allocation:", allocation_strs, 0, False)
-        if not ok: return
+        if not ok:
+            return
 
         resource, process = selection.split(" → ")
         success = self.graph_manager.release_resource(resource, process)
         if success:
             QMessageBox.information(self, "Released", f"Released {resource} from {process}")
+            # Check if a waiting process got the resource
+            waiting_processes = [p for p in self.graph_manager.graph.predecessors(resource) 
+                               if self.graph_manager.graph.has_edge(p, resource) and self.graph_manager.graph.edges[p, resource].get('style') == 'dashed']
+            if not waiting_processes or self.graph_manager.resource_instances[resource]["available"] > 0:
+                QMessageBox.information(self, "Resource Status", f"{resource} is now available")
+        else:
+            QMessageBox.warning(self, "Error", f"Failed to release {resource} from {process}")
+        self.show_graph()
 
-        self.show_graph()  # Refresh graph after release
-    
     def remove_resource(self):
         resources = [n for n in self.graph_manager.graph.nodes if n.startswith("R")]
         if not resources:
@@ -159,13 +159,27 @@ class ResourceAllocationSimulator(QMainWindow):
         else:
             QMessageBox.warning(self, "Error", f"Failed to remove {process}")
 
-
-
     def detect_deadlock(self):
+        wfg = nx.DiGraph()
+        processes = [n for n in self.graph_manager.graph.nodes if n.startswith("P")]
+        wfg.add_nodes_from(processes)
+
+        for process in processes:
+            for resource in self.graph_manager.requests.get(process, {}):
+                holders = [p for p in self.graph_manager.graph.successors(resource) 
+                          if p.startswith("P") and self.graph_manager.allocations[p].get(resource, 0) > 0]
+                for holder in holders:
+                    if holder != process:
+                        wfg.add_edge(process, holder)
+
         try:
-            cycles = list(nx.simple_cycles(self.graph_manager.graph))  # Find all cycles
+            cycles = list(nx.simple_cycles(wfg))
             if cycles:
-                QMessageBox.critical(self, "Deadlock Detected!", f"Deadlock cycles: {cycles}")
+                deadlocked_processes = set()
+                for cycle in cycles:
+                    deadlocked_processes.update(cycle)
+                QMessageBox.critical(self, "Deadlock Detected!", 
+                                   f"Deadlock cycles found: {cycles}\nDeadlocked processes: {list(deadlocked_processes)}")
             else:
                 QMessageBox.information(self, "No Deadlock", "System is safe")
         except nx.NetworkXNoCycle:
@@ -180,18 +194,17 @@ class ResourceAllocationSimulator(QMainWindow):
         resource_instances = self.graph_manager.resource_instances
 
         for node in self.graph_manager.graph.nodes:
-            if node.startswith("R"):  # Resource node
-                labels[node] = f"{node} ({resource_instances.get(node, 0)})"
+            if node.startswith("R"):
+                labels[node] = f"{node} ({resource_instances.get(node, {'total': 0})['available']}/{resource_instances.get(node, {'total': 0})['total']})"
                 color_map.append("#9370DB")
                 node_shapes[node] = "s"
-            else:  # Process node
+            else:
                 labels[node] = node
                 color_map.append("#44b0f2")
                 node_shapes[node] = "o"
 
         pos = nx.spring_layout(self.graph_manager.graph)
 
-        # Draw nodes with different shapes
         for shape in set(node_shapes.values()):
             nx.draw_networkx_nodes(self.graph_manager.graph, pos, 
                                    nodelist=[n for n in self.graph_manager.graph.nodes if node_shapes[n] == shape],
@@ -199,19 +212,15 @@ class ResourceAllocationSimulator(QMainWindow):
                                    node_color=[color_map[i] for i, n in enumerate(self.graph_manager.graph.nodes) if node_shapes[n] == shape],
                                    node_size=2000)
 
-        # Draw normal edges (allocations)
         nx.draw_networkx_edges(self.graph_manager.graph, pos, 
                                edgelist=[(u, v) for u, v in self.graph_manager.graph.edges if self.graph_manager.graph.edges[u, v].get('style') != 'dashed'],
                                edge_color="gray", arrowsize=20)
-
-        # Draw request edges (dashed orange)
         nx.draw_networkx_edges(self.graph_manager.graph, pos, 
                                edgelist=[(u, v) for u, v in self.graph_manager.graph.edges if self.graph_manager.graph.edges[u, v].get('style') == 'dashed'],
                                edge_color="orange", style='dashed', arrowsize=20)
 
         nx.draw_networkx_labels(self.graph_manager.graph, pos, labels, font_size=10)
 
-        # **Add Legend**
         legend_labels = {
             "Process": plt.Line2D([0], [0], marker='o', color='w', markersize=10, markerfacecolor="#44b0f2"),
             "Resource": plt.Line2D([0], [0], marker='s', color='w', markersize=10, markerfacecolor="#9370DB"),
@@ -220,9 +229,6 @@ class ResourceAllocationSimulator(QMainWindow):
         }
 
         plt.legend(handles=legend_labels.values(), labels=legend_labels.keys(), loc="upper right")
-
-        plt.pause(0.1)  # Allow real-time updates
+        plt.pause(0.1)
         plt.draw()
         plt.show()
-
-
